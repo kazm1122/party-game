@@ -1,1 +1,57 @@
-
+name: Build APK
+on:
+  workflow_dispatch:
+    inputs:
+      app_name:
+        description: 'اسم التطبيق الظاهر على الهاتف'
+        default: 'ألعاب الجلسة'
+      app_id:
+        description: 'معرّف الحزمة (لا تغيّره)'
+        default: 'com.party.games'
+permissions:
+  contents: write
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: تجهيز الملفات
+        env:
+          APP_NAME: ${{ inputs.app_name }}
+          APP_ID: ${{ inputs.app_id }}
+        run: |
+          npm install
+          cp docs/app.html www/game.html
+          BASE="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/${GITHUB_REF_NAME}/docs/"
+          sed -i "s|__REMOTE_BASE__|$BASE|" www/index.html
+          jq --arg n "$APP_NAME" --arg i "$APP_ID" '.appName=$n | .appId=$i' capacitor.config.json > c.tmp && mv c.tmp capacitor.config.json
+          mkdir -p ~/.android && cp ci/debug.keystore ~/.android/debug.keystore
+      - name: إنشاء مشروع أندرويد
+        run: |
+          npx cap add android
+          npx --yes @capacitor/assets@3.0.5 generate --android
+          npx cap sync android
+      - name: بناء APK
+        working-directory: android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+      - name: تجهيز الملف
+        run: cp android/app/build/outputs/apk/debug/app-debug.apk app.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-apk
+          path: app.apk
+      - name: نشر Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: APK #${{ github.run_number }}
+          files: app.apk
